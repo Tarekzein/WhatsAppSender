@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>WhatsApp Bulk Messenger</title>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600&display=swap">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+<div class="loading-overlay">
+    <div class="loading-spinner"></div>
+</div>
+
+<div class="container">
+    <h1>WhatsApp Bulk Messenger</h1>
+
+    <div id="qrcode-container">
+        <h2>Scan QR Code to Connect</h2>
+        <img id="qrcode" src="" alt="QR Code will appear here">
+    </div>
+
+    <div id="message-form" style="display: none;">
+        <form id="sender-form">
+            <div class="form-group">
+                <label>CSV File (with 'number' column):</label>
+                <input type="file" id="file" accept=".csv" required>
+            </div>
+
+            <div class="form-group">
+                <label>Message:</label>
+                <textarea id="message" required></textarea>
+            </div>
+
+            <div class="form-group">
+                <label>Delay (seconds):</label>
+                <input type="number" id="delay" value="5" min="1" required>
+            </div>
+
+            <button type="submit">Send Messages</button>
+        </form>
+    </div>
+    <div class="control-buttons">
+        <button id="logout-btn" style="display: none;">Logout</button>
+        <button id="new-qr-btn">Generate New QR Code</button>
+    </div>
+    <div class="status-counter" style="display: none;">
+        <span id="progress-text">Processing messages: 0/0</span>
+    </div>
+    <div id="status"></div>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+    // Add these utility functions at the top of your script
+    const showLoading = () => document.querySelector('.loading-overlay').style.display = 'flex';
+    const hideLoading = () => document.querySelector('.loading-overlay').style.display = 'none';
+
+    const setButtonLoading = (button, isLoading) => {
+        if (isLoading) {
+            button.classList.add('button-loading');
+            button.innerHTML = button.innerHTML + '<span class="button-spinner"></span>';
+        } else {
+            button.classList.remove('button-loading');
+            const spinner = button.querySelector('.button-spinner');
+            if (spinner) spinner.remove();
+        }
+    };
+
+    // Modify your existing socket listeners
+    socket.on('qrCode', (qrCodeDataUrl) => {
+        hideLoading();
+        qrcodeImg.src = qrCodeDataUrl;
+    });
+
+    socket.on('clientReady', () => {
+        hideLoading();
+        qrcodeContainer.style.display = 'none';
+        messageForm.style.display = 'block';
+        logoutBtn.style.display = 'block';
+    });
+
+    // Modify the message sending form submission
+    document.getElementById('sender-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const submitButton = e.target.querySelector('button[type="submit"]');
+        const statusCounter = document.querySelector('.status-counter');
+        const progressText = document.getElementById('progress-text');
+
+        setButtonLoading(submitButton, true);
+        statusCounter.style.display = 'block';
+
+        const formData = new FormData();
+        formData.append('file', document.getElementById('file').files[0]);
+        formData.append('message', document.getElementById('message').value);
+        formData.append('delay', document.getElementById('delay').value * 1000);
+
+        let messageCount = 0;
+        let totalMessages = 0;
+
+        try {
+            const response = await fetch('/send-messages', {
+                method: 'POST',
+                body: formData
+            });
+
+            const result = await response.json();
+            if (!result.success) {
+                throw new Error('Error sending messages');
+            }
+        } catch (err) {
+            alert('Error: ' + err.message);
+        } finally {
+            setButtonLoading(submitButton, false);
+            statusCounter.style.display = 'none';
+        }
+    });
+
+    // Modify the logout handler
+    logoutBtn.addEventListener('click', async () => {
+        try {
+            showLoading();
+            setButtonLoading(logoutBtn, true);
+
+            const response = await fetch('/logout', { method: 'POST' });
+            const data = await response.json();
+
+            if (data.success) {
+                location.reload();
+            }
+        } catch (err) {
+            console.error('Error logging out:', err);
+            alert('Error logging out. Please try again.');
+        } finally {
+            hideLoading();
+            setButtonLoading(logoutBtn, false);
+        }
+    });
+
+    // Modify the QR code generation handler
+    newQrBtn.addEventListener('click', async () => {
+        try {
+            showLoading();
+            setButtonLoading(newQrBtn, true);
+
+            await fetch('/generate-new-qr', { method: 'POST' });
+        } catch (err) {
+            console.error('Error generating new QR code:', err);
+            alert('Error generating QR code. Please try again.');
+        } finally {
+            setButtonLoading(newQrBtn, false);
+        }
+    });
+
+    // Modify the checkAuthStatus function
+    async function checkAuthStatus() {
+        try {
+            showLoading();
+            const response = await fetch('/auth-status');
+            const data = await response.json();
+
+            if (data.authenticated) {
+                qrcodeContainer.style.display = 'none';
+                messageForm.style.display = 'block';
+                logoutBtn.style.display = 'block';
+            } else if (data.qrCode) {
+                qrcodeImg.src = data.qrCode;
+            }
+        } catch (err) {
+            console.error('Error checking auth status:', err);
+            alert('Error checking authentication status. Please refresh the page.');
+        } finally {
+            hideLoading();
+        }
+    }
+
+    // Modify the message sent socket listener to update progress
+    let messageCount = 0;
+    let totalMessages = 0;
+
+    socket.on('messageSent', (data) => {
+        messageCount++;
+        const p = document.createElement('p');
+        p.textContent = `Message to ${data.number}: ${data.status}`;
+        p.className = data.status;
+        status.appendChild(p);
+
+        const progressText = document.getElementById('progress-text');
+        progressText.textContent = `Processing messages: ${messageCount}/${totalMessages}`;
+    });
+
+    // Add this to receive total message count from server
+    socket.on('totalMessages', (total) => {
+        totalMessages = total;
+        messageCount = 0;
+        const progressText = document.getElementById('progress-text');
+        progressText.textContent = `Processing messages: 0/${total}`;
+    });
+</script>
+<script>
+    const socket = io();
+    const qrcodeContainer = document.getElementById('qrcode-container');
+    const messageForm = document.getElementById('message-form');
+    const qrcodeImg = document.getElementById('qrcode');
+    const status = document.getElementById('status');
+
+    socket.on('qrCode', (qrCodeDataUrl) => {
+        qrcodeImg.src = qrCodeDataUrl;
+    });
+
+    socket.on('clientReady', () => {
+        qrcodeContainer.style.display = 'none';
+        messageForm.style.display = 'block';
+    });
+
+    socket.on('messageSent', (data) => {
+        const p = document.createElement('p');
+        p.textContent = `Message to ${data.number}: ${data.status}`;
+        p.className = data.status;
+        status.appendChild(p);
+    });
+
+    document.getElementById('sender-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+
+        const formData = new FormData();
+        formData.append('file', document.getElementById('file').files[0]);
+        formData.append('message', document.getElementById('message').value);
+        formData.append('delay', document.getElementById('delay').value * 1000);
+
+        try {
+            const response = await fetch('/send-messages', {
+                method: 'POST',
+                body: formData
+            });
+
+            const result = await response.json();
+            if (!result.success) {
+                alert('Error sending messages');
+            }
+        } catch (err) {
+            alert('Error: ' + err.message);
+        }
+    });
+</script>
+<!-- Add this to your existing JavaScript -->
+<script>
+    const logoutBtn = document.getElementById('logout-btn');
+    const newQrBtn = document.getElementById('new-qr-btn');
+
+    // Check authentication status on page load
+    async function checkAuthStatus() {
+        try {
+            const response = await fetch('/auth-status');
+            const data = await response.json();
+
+            if (data.authenticated) {
+                qrcodeContainer.style.display = 'none';
+                messageForm.style.display = 'block';
+                logoutBtn.style.display = 'block';
+            } else if (data.qrCode) {
+                qrcodeImg.src = data.qrCode;
+            }
+        } catch (err) {
+            console.error('Error checking auth status:', err);
+        }
+    }
+
+    // Logout handler
+    logoutBtn.addEventListener('click', async () => {
+        try {
+            const response = await fetch('/logout', { method: 'POST' });
+            const data = await response.json();
+
+            if (data.success) {
+                location.reload();
+            }
+        } catch (err) {
+            console.error('Error logging out:', err);
+        }
+    });
+
+    // Generate new QR code handler
+    newQrBtn.addEventListener('click', async () => {
+        try {
+            await fetch('/generate-new-qr', { method: 'POST' });
+            // The new QR code will be sent through the socket connection
+        } catch (err) {
+            console.error('Error generating new QR code:', err);
+        }
+    });
+
+    // Call checkAuthStatus when page loads
+    checkAuthStatus();
+</script>
+</body>
+</html>
