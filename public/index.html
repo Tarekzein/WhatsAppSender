@@ -32,6 +32,11 @@
             </div>
 
             <div class="form-group">
+                <label>Audio File (Optional):</label>
+                <input type="file" id="audioFile" name="audioFile" accept=".mp3,.ogg,.m4a,.wav">
+            </div>
+
+            <div class="form-group">
                 <label>Delay (seconds):</label>
                 <input type="number" id="delay" value="5" min="1" required>
             </div>
@@ -51,7 +56,15 @@
 
 <script src="/socket.io/socket.io.js"></script>
 <script>
-    // Add these utility functions at the top of your script
+    const socket = io();
+    const qrcodeContainer = document.getElementById('qrcode-container');
+    const messageForm = document.getElementById('message-form');
+    const qrcodeImg = document.getElementById('qrcode');
+    const status = document.getElementById('status');
+    const logoutBtn = document.getElementById('logout-btn');
+    const newQrBtn = document.getElementById('new-qr-btn');
+
+    // Add these utility functions
     const showLoading = () => document.querySelector('.loading-overlay').style.display = 'flex';
     const hideLoading = () => document.querySelector('.loading-overlay').style.display = 'none';
 
@@ -66,7 +79,7 @@
         }
     };
 
-    // Modify your existing socket listeners
+    // Socket event listeners
     socket.on('qrCode', (qrCodeDataUrl) => {
         hideLoading();
         qrcodeImg.src = qrCodeDataUrl;
@@ -79,7 +92,28 @@
         logoutBtn.style.display = 'block';
     });
 
-    // Modify the message sending form submission
+    let messageCount = 0;
+    let totalMessages = 0;
+
+    socket.on('messageSent', (data) => {
+        messageCount++;
+        const p = document.createElement('p');
+        p.textContent = `Message to ${data.number}: ${data.status}`;
+        p.className = data.status;
+        status.appendChild(p);
+
+        const progressText = document.getElementById('progress-text');
+        progressText.textContent = `Processing messages: ${messageCount}/${totalMessages}`;
+    });
+
+    socket.on('totalMessages', (total) => {
+        totalMessages = total;
+        messageCount = 0;
+        const progressText = document.getElementById('progress-text');
+        progressText.textContent = `Processing messages: 0/${total}`;
+    });
+
+    // Form submission
     document.getElementById('sender-form').addEventListener('submit', async (e) => {
         e.preventDefault();
         const submitButton = e.target.querySelector('button[type="submit"]');
@@ -88,14 +122,17 @@
 
         setButtonLoading(submitButton, true);
         statusCounter.style.display = 'block';
+        status.innerHTML = '';
 
         const formData = new FormData();
         formData.append('file', document.getElementById('file').files[0]);
         formData.append('message', document.getElementById('message').value);
         formData.append('delay', document.getElementById('delay').value * 1000);
-
-        let messageCount = 0;
-        let totalMessages = 0;
+        
+        const audioFile = document.getElementById('audioFile').files[0];
+        if (audioFile) {
+            formData.append('audioFile', audioFile);
+        }
 
         try {
             const response = await fetch('/send-messages', {
@@ -111,11 +148,10 @@
             alert('Error: ' + err.message);
         } finally {
             setButtonLoading(submitButton, false);
-            statusCounter.style.display = 'none';
         }
     });
 
-    // Modify the logout handler
+    // Logout handler
     logoutBtn.addEventListener('click', async () => {
         try {
             showLoading();
@@ -136,7 +172,7 @@
         }
     });
 
-    // Modify the QR code generation handler
+    // Generate new QR code handler
     newQrBtn.addEventListener('click', async () => {
         try {
             showLoading();
@@ -151,7 +187,7 @@
         }
     });
 
-    // Modify the checkAuthStatus function
+    // Check authentication status on page load
     async function checkAuthStatus() {
         try {
             showLoading();
@@ -172,122 +208,6 @@
             hideLoading();
         }
     }
-
-    // Modify the message sent socket listener to update progress
-    let messageCount = 0;
-    let totalMessages = 0;
-
-    socket.on('messageSent', (data) => {
-        messageCount++;
-        const p = document.createElement('p');
-        p.textContent = `Message to ${data.number}: ${data.status}`;
-        p.className = data.status;
-        status.appendChild(p);
-
-        const progressText = document.getElementById('progress-text');
-        progressText.textContent = `Processing messages: ${messageCount}/${totalMessages}`;
-    });
-
-    // Add this to receive total message count from server
-    socket.on('totalMessages', (total) => {
-        totalMessages = total;
-        messageCount = 0;
-        const progressText = document.getElementById('progress-text');
-        progressText.textContent = `Processing messages: 0/${total}`;
-    });
-</script>
-<script>
-    const socket = io();
-    const qrcodeContainer = document.getElementById('qrcode-container');
-    const messageForm = document.getElementById('message-form');
-    const qrcodeImg = document.getElementById('qrcode');
-    const status = document.getElementById('status');
-
-    socket.on('qrCode', (qrCodeDataUrl) => {
-        qrcodeImg.src = qrCodeDataUrl;
-    });
-
-    socket.on('clientReady', () => {
-        qrcodeContainer.style.display = 'none';
-        messageForm.style.display = 'block';
-    });
-
-    socket.on('messageSent', (data) => {
-        const p = document.createElement('p');
-        p.textContent = `Message to ${data.number}: ${data.status}`;
-        p.className = data.status;
-        status.appendChild(p);
-    });
-
-    document.getElementById('sender-form').addEventListener('submit', async (e) => {
-        e.preventDefault();
-
-        const formData = new FormData();
-        formData.append('file', document.getElementById('file').files[0]);
-        formData.append('message', document.getElementById('message').value);
-        formData.append('delay', document.getElementById('delay').value * 1000);
-
-        try {
-            const response = await fetch('/send-messages', {
-                method: 'POST',
-                body: formData
-            });
-
-            const result = await response.json();
-            if (!result.success) {
-                alert('Error sending messages');
-            }
-        } catch (err) {
-            alert('Error: ' + err.message);
-        }
-    });
-</script>
-<!-- Add this to your existing JavaScript -->
-<script>
-    const logoutBtn = document.getElementById('logout-btn');
-    const newQrBtn = document.getElementById('new-qr-btn');
-
-    // Check authentication status on page load
-    async function checkAuthStatus() {
-        try {
-            const response = await fetch('/auth-status');
-            const data = await response.json();
-
-            if (data.authenticated) {
-                qrcodeContainer.style.display = 'none';
-                messageForm.style.display = 'block';
-                logoutBtn.style.display = 'block';
-            } else if (data.qrCode) {
-                qrcodeImg.src = data.qrCode;
-            }
-        } catch (err) {
-            console.error('Error checking auth status:', err);
-        }
-    }
-
-    // Logout handler
-    logoutBtn.addEventListener('click', async () => {
-        try {
-            const response = await fetch('/logout', { method: 'POST' });
-            const data = await response.json();
-
-            if (data.success) {
-                location.reload();
-            }
-        } catch (err) {
-            console.error('Error logging out:', err);
-        }
-    });
-
-    // Generate new QR code handler
-    newQrBtn.addEventListener('click', async () => {
-        try {
-            await fetch('/generate-new-qr', { method: 'POST' });
-            // The new QR code will be sent through the socket connection
-        } catch (err) {
-            console.error('Error generating new QR code:', err);
-        }
-    });
 
     // Call checkAuthStatus when page loads
     checkAuthStatus();
